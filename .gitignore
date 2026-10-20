@@ -1,0 +1,7 @@
+# 系统与编辑器生成的杂项文件
+# 注意：不要在这里忽略以 . 开头的文件，Phase 2 依赖 quest/phase2/.xiaoxun
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~

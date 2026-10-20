@@ -1,0 +1,2 @@
+# 统一使用 LF 换行，避免 Windows 上 clone 后 scripts/*.sh 因 CRLF 无法运行
+* text=auto eol=lf
