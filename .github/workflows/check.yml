@@ -1,0 +1,121 @@
+name: PR 自动检查
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: 检查成员文件
+    runs-on: ubuntu-latest
+    steps:
+      # pull_request 事件默认检出 GitHub 生成的「试合并」提交：
+      # 它的第一个父提交（HEAD^1）就是当前的 main，两者之差正是这次 PR 的全部改动。
+      - name: 拉取代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 列出改动文件
+        run: |
+          git diff --name-status --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/changed.txt"
+          echo "本次 PR 相对 main 的改动："
+          cat "$RUNNER_TEMP/changed.txt"
+
+      # 只有这一步会让检查变红：文件名不对，或者改了不属于自己的文件。
+      - name: 文件名与越界校验
+        id: scope
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          expected="members/${PR_AUTHOR}.md"
+          fail=0
+          member_file=""
+          total=0
+          err() { echo "::error::$1"; fail=1; }
+
+          while IFS=$'\t' read -r status path; do
+            [ -z "$path" ] && continue
+            total=$((total + 1))
+            if [ "${path,,}" = "${expected,,}" ]; then
+              # GitHub 用户名不区分大小写，文件名大小写不同也算对
+              if [ "$status" = D ]; then
+                err "不要删除自己的成员文件：$path"
+              else
+                member_file="$path"
+              fi
+            elif [ "$status" = A ] && [[ "$path" == members/*.md ]]; then
+              err "文件名不对：你新增的是 $path，应该是 $expected（文件名必须和你的 GitHub 用户名一致）"
+            elif [ "$status" = A ]; then
+              err "越界：新增了 $path。本实验只需要新增 $expected 这一个文件"
+            else
+              err "越界：你改动了不属于你的文件 $path（状态 $status）。请在本地撤销对它的修改后重新 push"
+            fi
+          done < "$RUNNER_TEMP/changed.txt"
+
+          if [ "$total" -eq 0 ]; then
+            err "这次 PR 没有任何文件改动"
+          fi
+
+          echo "member_file=$member_file" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Git Quest 自动检查"
+            echo
+            echo "- PR 作者：\`$PR_AUTHOR\`"
+            echo "- 期望的成员文件：\`$expected\`"
+            if [ "$fail" -eq 0 ]; then
+              echo "- 文件名与越界校验：✅ 通过"
+            else
+              echo "- 文件名与越界校验：❌ 未通过，点开 Details 看具体原因"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$fail" -ne 0 ]; then
+            exit 1
+          fi
+          echo "文件名与越界校验通过。"
+
+      # 以下两步只提示、不判失败：本实验的重点是流程而非答案。
+      - name: 完整性校验
+        if: always() && steps.scope.outputs.member_file != ''
+        env:
+          MEMBER_FILE: ${{ steps.scope.outputs.member_file }}
+        run: |
+          missing=""
+          for key in 昵称 学号 感兴趣的方向 一句话自我介绍; do
+            line="$(tr -d '\r' < "$MEMBER_FILE" | grep -m1 -E "^[[:space:]]*[-*][[:space:]]*\*\*${key}" || true)"
+            value="$(printf '%s' "$line" | sed -E "s/^.*${key}[^*]*\*\*//; s/^[[:space:]]*(:|：)?[[:space:]]*//; s/[[:space:]]+$//")"
+            if [ -z "$value" ]; then
+              echo "::warning::「${key}」还没填"
+              missing="$missing ${key}"
+            else
+              echo "「${key}」已填写"
+            fi
+          done
+          if [ -z "$missing" ]; then
+            echo "- 必填项：✅ 都已填写" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- 必填项：⚠️ 还没填：${missing}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 口令校验
+        if: always() && steps.scope.outputs.member_file != ''
+        env:
+          MEMBER_FILE: ${{ steps.scope.outputs.member_file }}
+        run: |
+          # 用 main 上的 check.sh，而不是 PR 里可能被改过的版本
+          git show HEAD^1:scripts/check.sh > "$RUNNER_TEMP/check.sh"
+          bash "$RUNNER_TEMP/check.sh" "$MEMBER_FILE" | tee "$RUNNER_TEMP/result.txt"
+          {
+            echo
+            echo "### 口令"
+            echo
+            echo '```'
+            grep -E '^(Phase|共)' "$RUNNER_TEMP/result.txt"
+            echo '```'
+            echo
+            echo "口令错了不影响检查结果，改好后 push 即可重新检查。"
+          } >> "$GITHUB_STEP_SUMMARY"
