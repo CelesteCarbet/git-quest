@@ -1,0 +1,5 @@
+﻿你找到了。
+
+Phase 1 口令：HEBUT{qin-shen-gong-zhong}
+
+把它填进 members/你的用户名.md 里。
